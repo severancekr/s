@@ -8,7 +8,7 @@
     :root {
       --primary: #4285f4;
       --success: #34a853;
-      --danger: #ea4335; 
+      --danger: #ea4335;
       --bg: #f4f7f6;
       --text: #333;
     }
@@ -38,7 +38,7 @@
     .load-row button { 
       background: var(--primary); color: white; font-weight: bold; border: none; padding: 12px 15px; white-space: nowrap;
     }
-    .load-row .reset-btn { background: var(--danger); } 
+    .load-row .reset-btn { background: var(--danger); }
 
     .grid-container { 
       display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; 
@@ -123,14 +123,16 @@
         container.appendChild(div);
       });
       
-      // 💡 신규 반영: 대한민국(KST) 기준 오늘 날짜로 무조건 기본 세팅
-      const curr = new Date();
-      const utc = curr.getTime() + (curr.getTimezoneOffset() * 60 * 1000);
-      const kstTime = 9 * 60 * 60 * 1000; // 한국은 UTC보다 9시간 빠름
-      const kstDate = new Date(utc + kstTime);
+      // 💡 신규 추가: 대한민국(KST) 기준 오늘 날짜로 무조건 기본 세팅
+      const today = new Date();
+      const kstDateString = new Intl.DateTimeFormat('en-CA', { 
+        timeZone: 'Asia/Seoul', 
+        year: 'numeric', 
+        month: '2-digit', 
+        day: '2-digit' 
+      }).format(today);
       
-      // ISO 형식으로 변환하여 앞의 YYYY-MM-DD 부분만 가져와서 입력칸에 삽입
-      document.getElementById('workDate').value = kstDate.toISOString().split('T')[0];
+      document.getElementById('workDate').value = kstDateString;
     };
 
     // 화면에 입력된 모든 이름을 지우는 초기화 함수
@@ -193,4 +195,147 @@
       let unassignedPool = []; // 지정석 못 잡은 사람 대기소
 
       // (공통 함수) 원하는 근무지 배열 중 빈자리가 있으면 첫 번째 자리에 쏙 넣음
-      function tryAssign(worker
+      function tryAssign(worker, targetPosts) {
+        let isAssigned = false;
+        for (let post of targetPosts) {
+          if (emptyPosts.includes(post)) {
+            document.querySelector(`.worker-input[data-post="${post}"]`).value = worker;
+            emptyPosts.splice(emptyPosts.indexOf(post), 1);
+            isAssigned = true;
+            break;
+          }
+        }
+        return isAssigned;
+      }
+
+      // [조건 1~14번] 연쇄 반응이 일어나지 않도록 특정 순서대로 처리
+      // 박성민, 임시헌, 노한울 순으로 처리해야 조건 12, 13, 14가 맞물림.
+      const specialOrder = [
+        "박성민", "임시헌", "노한울", // 20층 그룹 (조건 12, 13, 14)
+        "이석인", "권기현", "김태영", // 팀장A (조건 1, 2, 3)
+        "조주현", "김창훈", "손경훈", // 주임 그룹 (조건 4, 5, 6)
+        "최대근", "김기헌", "김재욱", // 교대주임B 그룹 (조건 7, 8, 9)
+        "김용호", "황정욱"            // 3층 그룹 (조건 10, 11)
+      ];
+
+      // 명단에 있는 사람 중 특별 조건자만 순서대로 추출
+      let specialWorkersPresent = specialOrder.filter(w => workersToAssign.includes(w));
+      let otherWorkers = workersToAssign.filter(w => !specialOrder.includes(w));
+
+      specialWorkersPresent.forEach(w => {
+        let assigned = false;
+        
+        // 조건 12: 박성민 -> 20층A
+        if (w === "박성민") {
+          assigned = tryAssign(w, ["20층A"]);
+        } 
+        // 조건 13: 임시헌 -> 20층A가 비었으면 우선 채우고, 아니면 20층B
+        else if (w === "임시헌") {
+          assigned = tryAssign(w, ["20층A", "20층B"]);
+        } 
+        // 조건 14: 노한울 -> 20층A가 비었으면 우선 채우고, 아니면 20층B
+        else if (w === "노한울") {
+          assigned = tryAssign(w, ["20층A", "20층B"]);
+        } 
+        // 조건 1, 2, 3
+        else if (["이석인", "권기현", "김태영"].includes(w)) {
+          assigned = tryAssign(w, ["팀장A"]);
+        } 
+        // 조건 4
+        else if (w === "조주현") {
+          assigned = tryAssign(w, ["주임A"]);
+        } 
+        // 조건 5
+        else if (w === "김창훈") {
+          assigned = tryAssign(w, ["주임B"]);
+        } 
+        // 조건 6
+        else if (w === "손경훈") {
+          assigned = tryAssign(w, ["주임C"]);
+        } 
+        // 조건 7, 8, 9
+        else if (["최대근", "김기헌", "김재욱"].includes(w)) {
+          assigned = tryAssign(w, ["교대주임B"]);
+        } 
+        // 조건 10
+        else if (w === "김용호") {
+          assigned = tryAssign(w, ["3층A"]);
+        } 
+        // 조건 11
+        else if (w === "황정욱") {
+          assigned = tryAssign(w, ["3층B"]);
+        }
+
+        // 혹시라도 자리가 꽉 차서 못 들어갔으면 임시대기소로 (조건에 맞추되, 중복 시 남은 빈칸 배정 목적)
+        if (!assigned) {
+          unassignedPool.push(w);
+        }
+      });
+
+      // [조건 15] 응급실 11인방 우선 배정
+      const erGroup = ["전성우", "정현석", "황우진", "박지수", "이정식", "조무성", "황건국", "전대준", "고세영", "최민창", "조수영"];
+      const erPosts = ["응급실A", "응급실B", "응급실C", "응급실D", "응급실E"];
+
+      let erWorkersPresent = otherWorkers.filter(w => erGroup.includes(w));
+      let remainingWorkers = otherWorkers.filter(w => !erGroup.includes(w));
+
+      erWorkersPresent.forEach(w => {
+        // 남은 빈자리 중에서 응급실 자리만 모아서 섞음 (응급실 내에서 랜덤 배치)
+        let availableER = emptyPosts.filter(p => erPosts.includes(p));
+        availableER = shuffleArray(availableER);
+        
+        if (availableER.length > 0) {
+          tryAssign(w, availableER);
+        } else {
+          // 응급실 자리 5개가 꽉 찼으면 임시대기소로
+          unassignedPool.push(w);
+        }
+      });
+
+      // [나머지 인원] 이름 조건 없는 사람들 + 조건 자리 못 들어가서 튕겨난 사람들 -> 남은 빈 곳 완전 랜덤 배치
+      let finalPool = [...unassignedPool, ...remainingWorkers];
+      if (finalPool.length > 0) {
+        emptyPosts = shuffleArray(emptyPosts); // 남은 근무지 전체 섞기
+        finalPool.forEach(w => {
+          if (emptyPosts.length > 0) {
+            const pickedPost = emptyPosts.shift(); // 비어있는 자리 하나 뺌
+            document.querySelector(`.worker-input[data-post="${pickedPost}"]`).value = w;
+          }
+        });
+      }
+    }
+
+    // 데이터 구글 시트로 전송 (POST)
+    async function saveToSheet() {
+      const dateVal = document.getElementById('workDate').value;
+      if (!dateVal) { alert('근무 날짜를 선택해주세요!'); return; }
+
+      const inputs = document.querySelectorAll('.worker-input');
+      const workerList = Array.from(inputs).map(input => input.value);
+
+      const payload = { mode: 'saveSchedule', date: dateVal, workers: workerList };
+
+      const btn = document.getElementById('saveBtn');
+      btn.innerText = "⏳ 저장 중...";
+      btn.disabled = true;
+
+      try {
+        const response = await fetch(SCRIPT_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' }, 
+          body: JSON.stringify(payload)
+        });
+        const result = await response.json();
+        alert(result.message);
+      } catch (error) {
+        alert('저장 중 오류가 발생했습니다.');
+        console.error(error);
+      } finally {
+        btn.innerText = "💾 스케줄 저장하기";
+        btn.disabled = false;
+      }
+    }
+  </script>
+
+</body>
+</html>
