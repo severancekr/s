@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>근무 스케줄 입력 시스템</title>
+  <style>
+    :root {
+      --primary: #4285f4;
+      --success: #34a853;
+      --bg: #f4f7f6;
+      --text: #333;
+    }
+    body { 
+      font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; 
+      background-color: var(--bg); 
+      margin: 0; 
+      padding: 15px; 
+      padding-bottom: 90px; /* 하단 고정 버튼을 위한 여백 */
+      color: var(--text);
+    }
+    h2 { text-align: center; font-size: 20px; margin-bottom: 20px; }
+    
+    .control-panel { 
+      background: #fff; padding: 15px; border-radius: 12px; margin-bottom: 20px; 
+      box-shadow: 0 2px 8px rgba(0,0,0,0.05); 
+    }
+    .form-group { display: flex; flex-direction: column; margin-bottom: 12px; }
+    .form-group:last-child { margin-bottom: 0; }
+    label { font-size: 13px; font-weight: bold; color: #555; margin-bottom: 6px; }
+    
+    /* 모바일에서 터치하기 편한 큼직한 폼 요소 (font-size 16px 이상이어야 iOS 자동확대 방지) */
+    input[type="date"], select, button { 
+      padding: 12px; font-size: 16px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box;
+    }
+    .load-row { display: flex; gap: 8px; }
+    .load-row select { flex: 1; }
+    .load-row button { 
+      background: var(--primary); color: white; font-weight: bold; border: none; padding: 12px 20px; 
+    }
+
+    /* 그리드 레이아웃: 모바일에서는 2칸, 아주 작으면 1칸 */
+    .grid-container { 
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; 
+    }
+    .post-card { 
+      background: #fff; border: 1px solid #eaeaea; padding: 12px; border-radius: 10px; 
+      box-shadow: 0 1px 3px rgba(0,0,0,0.02); display: flex; flex-direction: column;
+    }
+    .post-card span { font-size: 12px; font-weight: bold; color: var(--primary); margin-bottom: 6px; }
+    .post-card input { 
+      border: none; border-bottom: 2px solid #eee; padding: 6px 0; font-size: 16px; 
+      border-radius: 0; width: 100%; transition: border-color 0.2s;
+    }
+    .post-card input:focus { outline: none; border-bottom-color: var(--primary); }
+
+    /* 하단 고정 저장 버튼 */
+    .fixed-bottom {
+      position: fixed; bottom: 0; left: 0; right: 0; background: white; 
+      padding: 15px; box-shadow: 0 -4px 12px rgba(0,0,0,0.08); z-index: 100;
+    }
+    .save-btn { 
+      width: 100%; padding: 15px; font-size: 18px; background: var(--success); 
+      color: white; border: none; border-radius: 10px; font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>📋 스마트 스케줄 배정</h2>
+
+  <div class="control-panel">
+    <div class="form-group">
+      <label>📅 근무 날짜</label>
+      <input type="date" id="workDate" required>
+    </div>
+    <div class="form-group">
+      <label>👥 근무조 추가 배정 (누적 가능)</label>
+      <div class="load-row">
+        <select id="groupSelect">
+          <option value="">조 선택</option>
+          <option value="A조">A조</option>
+          <option value="B조">B조</option>
+          <option value="C조">C조</option>
+          <option value="Y조">Y조</option>
+        </select>
+        <button onclick="loadGroupWorkers()">불러오기</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-container" id="postsContainer"></div>
+
+  <div class="fixed-bottom">
+    <button class="save-btn" id="saveBtn" onclick="saveToSheet()">💾 스케줄 저장하기</button>
+  </div>
+
+  <script>
+    // 기존에 사용하시던 구글 앱스 스크립트 URL 그대로 유지!
+    const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbx-8JovQcFelf8UqRnCj_7Lt2unIuelrlKY1gAVqYy0f2AjSjhhIKy0udka2m4Yw5jC/exec';
+    const posts = ["응급실A", "응급실B", "응급실C", "응급실D", "응급실E", "3층A", "3층B", "팀장A", "교대주임B", "주임A", "주임B", "주임C", "20층A", "20층B", "E/V(A)", "E/V(B)", "E/V(C)", "외래A", "외래B", "외래C", "외래선임", "33병동", "43병동", "서브"];
+
+    // 근무지 규칙 설정
+    const exactRules = {
+      "이석인": "팀장A", "권기현": "팀장A", "김태영": "팀장A",
+      "조주현": "주임A", "김창훈": "주임B", "손경훈": "주임C",
+      "최대근": "교대주임B", "김기헌": "교대주임B", "김재욱": "교대주임B",
+      "김용호": "3층A", "황정욱": "3층B", "박성민": "20층A", "임시헌": "20층B"
+    };
+    const erGroup = ["전성우", "정현석", "황우진", "박지수", "이정식", "조무성", "황건국", "전대준", "고세영", "최민창", "조수영"];
+    const erPosts = ["응급실A", "응급실B", "응급실C", "응급실D", "응급실E"];
+
+    // 배열 섞기 함수 (랜덤 배정용)
+    function shuffleArray(array) {
+      for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+      }
+      return array;
+    }
+
+    // 화면 초기화
+    window.onload = function() {
+      const container = document.getElementById('postsContainer');
+      posts.forEach((post) => {
+        const div = document.createElement('div');
+        div.className = 'post-card';
+        div.innerHTML = `<span>${post}</span><input type="text" class="worker-input" data-post="${post}" placeholder="이름 입력">`;
+        container.appendChild(div);
+      });
+      document.getElementById('workDate').valueAsDate = new Date();
+    };
+
+    // 조 명단 불러오기 (여러 번 누르면 빈칸에 누적해서 배정됨)
+    async function loadGroupWorkers() {
+      const groupName = document.getElementById('groupSelect').value;
+      if (!groupName) { alert('조를 선택해주세요.'); return; }
+      
+      try {
+        const response = await fetch(`${SCRIPT_URL}?mode=getGroup&groupName=${encodeURIComponent(groupName)}`);
+        const result = await response.json();
+        
+        if(result.data && result.data.length > 0) {
+          assignWorkersToBoard(result.data);
+        } else {
+          alert('명단이 비어있거나 불러오는데 실패했습니다.');
+        }
+      } catch (error) {
+        alert('서버와 통신하는 중 오류가 발생했습니다.');
+      }
+    }
+
+    // ⭐ 핵심 자동 배정 알고리즘
+    function assignWorkersToBoard(newWorkers) {
+      const inputs = document.querySelectorAll('.worker-input');
+      
+      // 1. 현재 배치 현황 및 비어있는 자리 파악
+      let emptyPosts = [];
+      let currentlyAssigned = new Set();
+      
+      inputs.forEach(input => {
+        const val = input.value.trim();
+        if (val) currentlyAssigned.add(val);
+        else emptyPosts.push(input.getAttribute('data-post'));
+      });
+
+      // 2. 이미 화면에 입력된 사람은 제외 (중복 방지)
+      let workersToAssign = newWorkers.filter(w => !currentlyAssigned.has(w));
+      if (workersToAssign.length === 0) return;
+
+      let unassignedPool = []; // 지정 자리에 못 들어간 인원 임시 보관소
+
+      // 3. 고정 근무지 우선 배정 (팀장, 주임 등)
+      let step1Remain = [];
+      workersToAssign.forEach(w => {
+        if (exactRules[w]) {
+          const targetPost = exactRules[w];
+          if (emptyPosts.includes(targetPost)) {
+            // 자리가 비어있으면 배정
+            document.querySelector(`.worker-input[data-post="${targetPost}"]`).value = w;
+            emptyPosts.splice(emptyPosts.indexOf(targetPost), 1);
+          } else {
+            // 자리가 꽉 찼으면 (중복 발생 시) 임시 보관소로 이동 -> 나중에 랜덤 빈칸행
+            unassignedPool.push(w);
+          }
+        } else {
+          step1Remain.push(w);
+        }
+      });
+
+      // 4. "노한울" 조건 처리 (박성민/임시헌이 없어 20층B가 비어있다면 배정)
+      let step2Remain = [];
+      step1Remain.forEach(w => {
+        if (w === "노한울") {
+          if (emptyPosts.includes("20층B")) {
+            document.querySelector(`.worker-input[data-post="20층B"]`).value = w;
+            emptyPosts.splice(emptyPosts.indexOf("20층B"), 1);
+          } else {
+            unassignedPool.push(w);
+          }
+        } else {
+          step2Remain.push(w);
+        }
+      });
+
+      // 5. 응급실 11인방 우선 배정 (랜덤)
+      let step3Remain = [];
+      step2Remain.forEach(w => {
+        if (erGroup.includes(w)) {
+          let availableER = emptyPosts.filter(p => erPosts.includes(p));
+          if (availableER.length > 0) {
+            availableER = shuffleArray(availableER); // 응급실 내 자리 랜덤
+            const pickedPost = availableER[0];
+            document.querySelector(`.worker-input[data-post="${pickedPost}"]`).value = w;
+            emptyPosts.splice(emptyPosts.indexOf(pickedPost), 1);
+          } else {
+            // 응급실 5자리가 다 찼으면 임시 보관소로 이동
+            unassignedPool.push(w);
+          }
+        } else {
+          step3Remain.push(w);
+        }
+      });
+
+      // 6. 나머지 인원들 전체 (조건 없는 사람 + 조건이 겹쳐서 자리 못 잡은 사람) -> 완전 랜덤 배정
+      let finalPool = unassignedPool.concat(step3Remain);
+      if (finalPool.length > 0) {
+        emptyPosts = shuffleArray(emptyPosts); // 남은 근무지 전체 섞기
+        finalPool.forEach(w => {
+          if (emptyPosts.length > 0) {
+            const pickedPost = emptyPosts.shift();
+            document.querySelector(`.worker-input[data-post="${pickedPost}"]`).value = w;
+          }
+        });
+      }
+    }
+
+    // 데이터 저장하기
+    async function saveToSheet() {
+      const dateVal = document.getElementById('workDate').value;
+      if (!dateVal) { alert('근무 날짜를 선택해주세요!'); return; }
+
+      const inputs = document.querySelectorAll('.worker-input');
+      const workerList = Array.from(inputs).map(input => input.value);
+
+      const payload = { mode: 'saveSchedule', date: dateVal, workers: workerList };
+
+      const btn = document.getElementById('saveBtn');
+      btn.innerText = "⏳ 저장 중...";
+      btn.disabled = true;
+
+      try {
+        const response = await fetch(SCRIPT_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' }, 
+          body: JSON.stringify(payload)
+        });
+        const result = await response.json();
+        alert(result.message);
+      } catch (error) {
+        alert('저장 중 오류가 발생했습니다.');
+      } finally {
+        btn.innerText = "💾 스케줄 저장하기";
+        btn.disabled = false;
+      }
+    }
+  </script>
+
+</body>
+</html>
