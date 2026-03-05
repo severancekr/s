@@ -90,7 +90,7 @@
   <div class="control-panel">
     <div class="form-group">
       <label>📅 근무 날짜</label>
-      <input type="date" id="workDate" required onchange="updateWeekColor()">
+      <input type="date" id="workDate" required onchange="onDateChange()">
     </div>
     <div class="form-group">
       <label>👥 근무조 불러오기</label>
@@ -130,6 +130,12 @@
       return array;
     }
 
+    // 💡 추가된 함수: 날짜가 변경될 때 두 가지 기능을 동시에 실행합니다
+    function onDateChange() {
+      updateWeekColor();
+      fetchDailySchedule();
+    }
+
     function updateWeekColor() {
       const dateVal = document.getElementById('workDate').value;
       if (!dateVal) return;
@@ -149,6 +155,43 @@
       ];
       
       document.body.style.backgroundColor = weekColors[(weekOfMonth - 1) % weekColors.length];
+    }
+
+    // 💡 추가된 기능: 시트에 이미 저장된 스케줄이 있다면 자동으로 화면에 불러옵니다 (수정 편의성)
+    async function fetchDailySchedule() {
+      const dateVal = document.getElementById('workDate').value;
+      if (!dateVal) return;
+
+      const btn = document.getElementById('saveBtn');
+      const originalText = btn.innerText;
+      btn.innerText = "⏳ 기존 스케줄 확인 중...";
+      btn.disabled = true;
+
+      // 새 날짜를 선택하면 화면을 먼저 지워줍니다
+      const inputs = document.querySelectorAll('.worker-input');
+      inputs.forEach(input => input.value = '');
+
+      try {
+        const response = await fetch(`${SCRIPT_URL}?mode=daily&date=${dateVal}`);
+        const result = await response.json();
+
+        // 시트에 데이터가 존재할 경우 화면 칸에 맞게 자동으로 채워 넣음
+        if (result.data && result.data.length > 0) {
+          result.data.forEach(item => {
+            const inputEl = document.querySelector(`.worker-input[data-post="${item.post}"]`);
+            // 빈칸이거나 '미정'이 아닌 진짜 이름이 있을 때만 채움
+            if (inputEl && item.name && item.name !== '미정') {
+              inputEl.value = item.name;
+            }
+          });
+        }
+      } catch (error) {
+        console.error('스케줄 불러오기 오류:', error);
+      } finally {
+        autoUpdateVisitation(); // 불러온 명단 기준으로 면회칸 자동 정리
+        btn.innerText = originalText;
+        btn.disabled = false;
+      }
     }
 
     function autoUpdateVisitation() {
@@ -191,6 +234,7 @@
       
       document.getElementById('workDate').value = kstDateString;
       updateWeekColor(); 
+      fetchDailySchedule(); // 💡 초기 로딩 시 오늘 날짜의 스케줄이 있다면 자동으로 불러옴
 
       const targetPosts = ["E/V(A)", "20층B", "E/V(B)", "3층B"];
       targetPosts.forEach(post => {
@@ -273,7 +317,6 @@
         return isAssigned;
       }
 
-      // 💡 조건 추가: 외래선임 3인방 추가 완료
       const specialOrder = [
         "박성민", "임시헌", "노한울", 
         "이석인", "권기현", "김태영", 
@@ -299,7 +342,6 @@
         else if (["최대근", "김기헌", "김재욱"].includes(w)) { assigned = tryAssign(w, ["교대주임B"]); } 
         else if (w === "김용호") { assigned = tryAssign(w, ["3층A"]); } 
         else if (w === "황정욱") { assigned = tryAssign(w, ["3층B"]); }
-        // 💡 조건 반영: 외래선임 배정 처리
         else if (["박영철", "선호진", "곽태문"].includes(w)) { assigned = tryAssign(w, ["외래선임"]); }
 
         if (!assigned) { unassignedPool.push(w); }
@@ -355,7 +397,6 @@
         });
         const result = await response.json();
         
-        // 💡 멘트 추가 및 이동 기능 반영
         if(confirm(result.message + "\n\n수고하셨습니다!\n'근태확인하기' 페이지로 이동하시겠습니까?")) {
            window.location.href = "https://severancekr.github.io/-/";
         }
