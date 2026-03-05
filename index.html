@@ -355,8 +355,10 @@
         });
         const result = await response.json();
         
-        // 💡 멘트 추가 반영
-        alert(result.message + "\n\n근무 배정 수고하셨습니다.");
+        // 💡 멘트 추가 및 이동 기능 반영
+        if(confirm(result.message + "\n\n수고하셨습니다!\n'근태확인하기' 페이지로 이동하시겠습니까?")) {
+           window.location.href = "https://severancekr.github.io/-/";
+        }
       } catch (error) {
         alert('저장 중 오류가 발생했습니다.');
         console.error(error);
