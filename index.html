@@ -19,8 +19,16 @@
       color: var(--text);
       transition: background-color 0.4s ease;
     }
-    h2 { text-align: center; font-size: 18px; margin-bottom: 15px; }
+    h2 { text-align: center; font-size: 18px; margin-bottom: 5px; }
     
+    /* 💡 신규: 실시간 시계 디자인 */
+    #clockContainer { text-align: center; margin-bottom: 15px; }
+    .clock-box { 
+      display: inline-block; padding: 4px 12px; border-radius: 6px; 
+      background: rgba(255,255,255,0.8); box-shadow: 0 1px 3px rgba(0,0,0,0.1); 
+      font-size: 14px; font-weight: bold; letter-spacing: 0.5px;
+    }
+
     .control-panel { 
       background: rgba(255, 255, 255, 0.9); padding: 12px; border-radius: 12px; margin-bottom: 15px; 
       box-shadow: 0 2px 8px rgba(0,0,0,0.05); 
@@ -81,11 +89,26 @@
       width: 100%; padding: 14px; font-size: 16px; background: var(--success); 
       color: white; border: none; border-radius: 10px; font-weight: bold;
     }
+
+    #loadingOverlay {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(255, 255, 255, 0.95); z-index: 9999;
+      display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;
+    }
   </style>
 </head>
 <body>
 
+  <div id="loadingOverlay">
+    <h3 style="color:var(--primary); margin-bottom:10px;">스마트 스케줄러 로딩 중...</h3>
+    <p style="color:#555; font-size:14px; padding: 0 20px;">구글 시트의 최신 환경설정과<br>휴가자 정보를 불러오고 있습니다 ⏳</p>
+  </div>
+
   <h2>📋 스마트 스케줄 배정</h2>
+  
+  <div id="clockContainer">
+    <div id="liveClock" class="clock-box"></div>
+  </div>
 
   <div class="control-panel">
     <div class="form-group">
@@ -93,7 +116,7 @@
       <input type="date" id="workDate" required onchange="onDateChange()">
     </div>
     <div class="form-group">
-      <label>👥 근무조 불러오기</label>
+      <label>👥 근무조 불러오기 (휴가자 자동제외)</label>
       <div class="load-row">
         <select id="groupSelect">
           <option value="">조 선택</option>
@@ -104,6 +127,7 @@
           <option value="A조+Y조">A조+Y조</option>
           <option value="B조+Y조">B조+Y조</option>
           <option value="C조+Y조">C조+Y조</option>
+          <option value="추가근무자">추가근무자</option>
         </select>
         <button onclick="loadGroupWorkers()">불러오기</button>
         <button class="reset-btn" onclick="clearBoard()">초기화</button>
@@ -120,7 +144,43 @@
   <script>
     const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbx-8JovQcFelf8UqRnCj_7Lt2unIuelrlKY1gAVqYy0f2AjSjhhIKy0udka2m4Yw5jC/exec';
     
-    const posts = ["응급실A", "응급실B", "응급실C", "응급실D", "응급실E", "3층A", "3층B", "팀장A", "교대주임B", "주임A", "주임B", "주임C", "20층A", "20층B", "E/V(A)", "E/V(B)", "E/V(C)", "외래A", "외래B", "외래C", "외래선임", "33병동", "43병동", "서브", "면회"];
+    let dynamicConfig = null; 
+
+    // 💡 신규: 실시간 시계 작동 함수
+    function startClock() {
+      setInterval(updateClock, 1000);
+      updateClock();
+    }
+
+    function updateClock() {
+      const now = new Date();
+      // 한국 시간대(KST)로 정확히 변환하여 계산
+      const kstTime = new Date(now.toLocaleString("en-US", {timeZone: "Asia/Seoul"}));
+      
+      const y = String(kstTime.getFullYear()).slice(-2);
+      const m = String(kstTime.getMonth() + 1).padStart(2, '0');
+      const d = String(kstTime.getDate()).padStart(2, '0');
+      const days = ['일', '월', '화', '수', '목', '금', '토'];
+      const dayInt = kstTime.getDay();
+      const dayStr = days[dayInt];
+      const hh = String(kstTime.getHours()).padStart(2, '0');
+      const mm = String(kstTime.getMinutes()).padStart(2, '0');
+
+      let color = '#333'; // 평일 검정
+      if (dayInt === 6) color = '#4285f4'; // 토요일 파랑
+      if (dayInt === 0) color = '#ea4335'; // 일요일 빨강
+
+      // 오늘이 공휴일 목록에 있는지 확인
+      const fullDateStr = `${kstTime.getFullYear()}-${m}-${d}`;
+      if (dynamicConfig && dynamicConfig.holidays && dynamicConfig.holidays.includes(fullDateStr)) {
+        color = '#ea4335'; // 공휴일은 무조건 빨강
+      }
+
+      const clockEl = document.getElementById('liveClock');
+      if(clockEl) {
+        clockEl.innerHTML = `<span style="color:${color}">${y}.${m}.${d}(${dayStr}) ${hh}:${mm}</span>`;
+      }
+    }
 
     function shuffleArray(array) {
       for (let i = array.length - 1; i > 0; i--) {
@@ -130,93 +190,73 @@
       return array;
     }
 
-    // 💡 추가된 함수: 날짜가 변경될 때 두 가지 기능을 동시에 실행합니다
+    window.onload = async function() {
+      startClock(); // 시계 시작
+      try {
+        const res = await fetch(`${SCRIPT_URL}?mode=getConfig`);
+        const json = await res.json();
+        dynamicConfig = json.data;
+
+        const today = new Date();
+        const kstDateString = new Intl.DateTimeFormat('en-CA', { 
+          timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' 
+        }).format(today);
+        
+        document.getElementById('workDate').value = kstDateString;
+        
+        // 날짜 세팅 후 화면을 그립니다 (휴일 여부 판단을 위해)
+        buildUI();
+        updateWeekColor(); 
+        await fetchDailySchedule(); 
+
+        document.getElementById('loadingOverlay').style.display = 'none';
+      } catch (error) {
+        alert("서버 설정을 불러오는데 실패했습니다. 화면을 새로고침 해주세요.");
+        console.error(error);
+      }
+    };
+
     function onDateChange() {
       updateWeekColor();
+      buildUI(); // 💡 날짜가 바뀌면 휴일 여부를 판단해 화면(근무지)을 다시 그립니다.
       fetchDailySchedule();
     }
 
     function updateWeekColor() {
       const dateVal = document.getElementById('workDate').value;
       if (!dateVal) return;
-      
       const d = new Date(dateVal);
       const firstDayOfMonth = new Date(d.getFullYear(), d.getMonth(), 1);
       const pastDaysOfMonth = d.getDate() - 1;
       const weekOfMonth = Math.ceil((pastDaysOfMonth + firstDayOfMonth.getDay() + 1) / 7);
-      
-      const weekColors = [
-        '#f0f4f8', 
-        '#f5f0f0', 
-        '#f0f5f1', 
-        '#f5f3e6', 
-        '#f3f0f5', 
-        '#eef5f5'  
-      ];
-      
+      const weekColors = ['#f0f4f8', '#f5f0f0', '#f0f5f1', '#f5f3e6', '#f3f0f5', '#eef5f5'];
       document.body.style.backgroundColor = weekColors[(weekOfMonth - 1) % weekColors.length];
     }
 
-    // 💡 추가된 기능: 시트에 이미 저장된 스케줄이 있다면 자동으로 화면에 불러옵니다 (수정 편의성)
-    async function fetchDailySchedule() {
-      const dateVal = document.getElementById('workDate').value;
-      if (!dateVal) return;
-
-      const btn = document.getElementById('saveBtn');
-      const originalText = btn.innerText;
-      btn.innerText = "⏳ 기존 스케줄 확인 중...";
-      btn.disabled = true;
-
-      // 새 날짜를 선택하면 화면을 먼저 지워줍니다
-      const inputs = document.querySelectorAll('.worker-input');
-      inputs.forEach(input => input.value = '');
-
-      try {
-        const response = await fetch(`${SCRIPT_URL}?mode=daily&date=${dateVal}`);
-        const result = await response.json();
-
-        // 시트에 데이터가 존재할 경우 화면 칸에 맞게 자동으로 채워 넣음
-        if (result.data && result.data.length > 0) {
-          result.data.forEach(item => {
-            const inputEl = document.querySelector(`.worker-input[data-post="${item.post}"]`);
-            // 빈칸이거나 '미정'이 아닌 진짜 이름이 있을 때만 채움
-            if (inputEl && item.name && item.name !== '미정') {
-              inputEl.value = item.name;
-            }
-          });
-        }
-      } catch (error) {
-        console.error('스케줄 불러오기 오류:', error);
-      } finally {
-        autoUpdateVisitation(); // 불러온 명단 기준으로 면회칸 자동 정리
-        btn.innerText = originalText;
-        btn.disabled = false;
-      }
-    }
-
-    function autoUpdateVisitation() {
-      const targetPosts = ["E/V(A)", "20층B", "E/V(B)", "3층B"];
-      let visitors = [];
-      
-      targetPosts.forEach(post => {
-        const inputEl = document.querySelector(`.worker-input[data-post="${post}"]`);
-        if (inputEl && inputEl.value.trim() !== "") {
-          visitors.push(inputEl.value.trim());
-        }
-      });
-      
-      const visitArea = document.querySelector(`.worker-input[data-post="면회"]`);
-      if (visitArea) {
-        visitArea.value = visitors.join(' ');
-      }
-    }
-
-    window.onload = function() {
+    // 💡 수정됨: 날짜를 확인하여 주말/공휴일이면 특정 구역을 숨깁니다.
+    function buildUI() {
       const container = document.getElementById('postsContainer');
+      container.innerHTML = ''; 
       
-      posts.forEach((post) => {
+      const dateVal = document.getElementById('workDate').value;
+      let isOffDay = false;
+      
+      if (dateVal) {
+         const d = new Date(dateVal);
+         const dayInt = d.getDay();
+         // 주말 판단
+         if (dayInt === 0 || dayInt === 6) isOffDay = true;
+         // 공휴일 목록에 있는지 판단
+         if (dynamicConfig && dynamicConfig.holidays && dynamicConfig.holidays.includes(dateVal)) isOffDay = true;
+      }
+
+      const excludePosts = dynamicConfig.holidayExcludePosts || [];
+
+      dynamicConfig.posts.forEach((post) => {
+        // 💡 핵심: 휴일이고, 이 구역이 제외 목록에 있다면 칸을 만들지 않고 패스!
+        if (isOffDay && excludePosts.includes(post)) return;
+
         const div = document.createElement('div');
-        
         if (post === "면회") {
           div.className = 'post-card wide-card';
           div.innerHTML = `<span>${post}</span><textarea class="worker-input" data-post="${post}" rows="2" placeholder="대상자 이름 자동/수동 입력" style="resize:none;"></textarea>`;
@@ -226,27 +266,60 @@
         }
         container.appendChild(div);
       });
-      
-      const today = new Date();
-      const kstDateString = new Intl.DateTimeFormat('en-CA', { 
-        timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' 
-      }).format(today);
-      
-      document.getElementById('workDate').value = kstDateString;
-      updateWeekColor(); 
-      fetchDailySchedule(); // 💡 초기 로딩 시 오늘 날짜의 스케줄이 있다면 자동으로 불러옴
 
-      const targetPosts = ["E/V(A)", "20층B", "E/V(B)", "3층B"];
+      const targetPosts = dynamicConfig.visitPosts || [];
       targetPosts.forEach(post => {
         const el = document.querySelector(`.worker-input[data-post="${post}"]`);
-        if (el) {
-          el.addEventListener('input', autoUpdateVisitation);
+        if (el) el.addEventListener('input', autoUpdateVisitation);
+      });
+    }
+
+    async function fetchDailySchedule() {
+      const dateVal = document.getElementById('workDate').value;
+      if (!dateVal) return;
+
+      const btn = document.getElementById('saveBtn');
+      const originalText = btn.innerText;
+      btn.innerText = "⏳ 기존 스케줄 확인 중...";
+      btn.disabled = true;
+
+      clearBoard(false); 
+
+      try {
+        const response = await fetch(`${SCRIPT_URL}?mode=daily&date=${dateVal}`);
+        const result = await response.json();
+        if (result.data && result.data.length > 0) {
+          result.data.forEach(item => {
+            const inputEl = document.querySelector(`.worker-input[data-post="${item.post}"]`);
+            if (inputEl && item.name && item.name !== '미정') {
+              inputEl.value = item.name;
+            }
+          });
+        }
+      } catch (error) {
+        console.error('스케줄 불러오기 오류:', error);
+      } finally {
+        autoUpdateVisitation(); 
+        btn.innerText = originalText;
+        btn.disabled = false;
+      }
+    }
+
+    function autoUpdateVisitation() {
+      const targetPosts = dynamicConfig.visitPosts || [];
+      let visitors = [];
+      targetPosts.forEach(post => {
+        const inputEl = document.querySelector(`.worker-input[data-post="${post}"]`);
+        if (inputEl && inputEl.value.trim() !== "") {
+          visitors.push(inputEl.value.trim());
         }
       });
-    };
+      const visitArea = document.querySelector(`.worker-input[data-post="면회"]`);
+      if (visitArea) visitArea.value = visitors.join(' ');
+    }
 
-    function clearBoard() {
-      if(confirm('화면에 입력된 명단을 모두 지우시겠습니까?')) {
+    function clearBoard(askConfirm = true) {
+      if(!askConfirm || confirm('화면에 입력된 명단을 모두 지우시겠습니까?')) {
         const inputs = document.querySelectorAll('.worker-input');
         inputs.forEach(input => input.value = '');
         autoUpdateVisitation(); 
@@ -256,7 +329,6 @@
     async function loadGroupWorkers() {
       const groupValue = document.getElementById('groupSelect').value;
       if (!groupValue) { alert('조를 선택해주세요.'); return; }
-      
       const groupsToLoad = groupValue.split('+');
       let combinedWorkers = [];
 
@@ -268,39 +340,37 @@
             combinedWorkers = combinedWorkers.concat(result.data);
           }
         }
-
         if(combinedWorkers.length > 0) {
           combinedWorkers = [...new Set(combinedWorkers)];
           assignWorkersToBoard(combinedWorkers);
-          
           autoUpdateVisitation();
         } else {
           alert('명단이 비어있거나 불러오는데 실패했습니다.');
         }
       } catch (error) {
         alert('서버와 통신하는 중 오류가 발생했습니다.');
-        console.error(error);
       }
     }
 
     function assignWorkersToBoard(newWorkers) {
       const inputs = document.querySelectorAll('.worker-input');
-      
       let emptyPosts = [];
       let currentlyAssigned = new Set();
       
       inputs.forEach(input => {
         const val = input.value.trim();
         const pName = input.getAttribute('data-post');
-        
         if (pName === "면회") return;
-
         if (val) currentlyAssigned.add(val);
         else emptyPosts.push(pName);
       });
 
-      let workersToAssign = newWorkers.filter(w => !currentlyAssigned.has(w));
-      if (workersToAssign.length === 0) return;
+      const validWorkers = newWorkers.filter(w => !(dynamicConfig.vacationers || []).includes(w));
+      let workersToAssign = validWorkers.filter(w => !currentlyAssigned.has(w));
+      if (workersToAssign.length === 0) {
+        alert('추가로 배정할 인원이 없거나 모두 휴가자/기배정자 입니다.');
+        return;
+      }
 
       let unassignedPool = [];
 
@@ -317,38 +387,50 @@
         return isAssigned;
       }
 
-      const specialOrder = [
-        "박성민", "임시헌", "노한울", 
-        "이석인", "권기현", "김태영", 
-        "조주현", "김창훈", "손경훈", 
-        "최대근", "김기헌", "김재욱", 
-        "김용호", "황정욱",
-        "박영철", "선호진", "곽태문"            
-      ];
+      let ruleWorkers = [];
+      let ruleMapping = {};
 
-      let specialWorkersPresent = specialOrder.filter(w => workersToAssign.includes(w));
-      let otherWorkers = workersToAssign.filter(w => !specialOrder.includes(w));
+      const dVal = document.getElementById('workDate').value;
+      const selectedDate = new Date(dVal);
+      const dayOfWeek = selectedDate.getDay(); 
 
-      specialWorkersPresent.forEach(w => {
-        let assigned = false;
-        
-        if (w === "박성민") { assigned = tryAssign(w, ["20층A"]); } 
-        else if (w === "임시헌") { assigned = tryAssign(w, ["20층A", "20층B"]); } 
-        else if (w === "노한울") { assigned = tryAssign(w, ["20층A", "20층B"]); } 
-        else if (["이석인", "권기현", "김태영"].includes(w)) { assigned = tryAssign(w, ["팀장A"]); } 
-        else if (w === "조주현") { assigned = tryAssign(w, ["주임A"]); } 
-        else if (w === "김창훈") { assigned = tryAssign(w, ["주임B"]); } 
-        else if (w === "손경훈") { assigned = tryAssign(w, ["주임C"]); } 
-        else if (["최대근", "김기헌", "김재욱"].includes(w)) { assigned = tryAssign(w, ["교대주임B"]); } 
-        else if (w === "김용호") { assigned = tryAssign(w, ["3층A"]); } 
-        else if (w === "황정욱") { assigned = tryAssign(w, ["3층B"]); }
-        else if (["박영철", "선호진", "곽태문"].includes(w)) { assigned = tryAssign(w, ["외래선임"]); }
-
-        if (!assigned) { unassignedPool.push(w); }
+      (dynamicConfig.specialRules || []).forEach(rule => {
+        if (rule.ruleType === '요일교대') {
+          let rotatedWorkers = [...rule.workers];
+          for (let i = 0; i < dayOfWeek; i++) {
+            rotatedWorkers.push(rotatedWorkers.shift()); 
+          }
+          
+          rotatedWorkers.forEach((w, index) => {
+            if (index < rule.targets.length && w) {
+              if(!ruleWorkers.includes(w)) {
+                ruleWorkers.push(w);
+                ruleMapping[w] = () => tryAssign(w, [rule.targets[index]]);
+              }
+            }
+          });
+        } 
+        else {
+          rule.workers.forEach(w => {
+             if(!ruleWorkers.includes(w)) {
+               ruleWorkers.push(w);
+               ruleMapping[w] = () => tryAssign(w, rule.targets);
+             }
+          });
+        }
       });
 
-      const erGroup = ["전성우", "정현석", "황우진", "박지수", "이정식", "조무성", "황건국", "전대준", "고세영", "최민창", "조수영"];
-      const erPosts = ["응급실A", "응급실B", "응급실C", "응급실D", "응급실E"];
+      let specialWorkersPresent = ruleWorkers.filter(w => workersToAssign.includes(w));
+      let otherWorkers = workersToAssign.filter(w => !ruleWorkers.includes(w));
+
+      let presentOrdered = ruleWorkers.filter(w => specialWorkersPresent.includes(w));
+      presentOrdered.forEach(w => {
+         let assigned = ruleMapping[w]();
+         if(!assigned) unassignedPool.push(w);
+      });
+
+      const erGroup = dynamicConfig.erGroupWorkers || [];
+      const erPosts = dynamicConfig.erPosts || [];
 
       let erWorkersPresent = otherWorkers.filter(w => erGroup.includes(w));
       let remainingWorkers = otherWorkers.filter(w => !erGroup.includes(w));
@@ -356,12 +438,8 @@
       erWorkersPresent.forEach(w => {
         let availableER = emptyPosts.filter(p => erPosts.includes(p));
         availableER = shuffleArray(availableER);
-        
-        if (availableER.length > 0) {
-          tryAssign(w, availableER);
-        } else {
-          unassignedPool.push(w);
-        }
+        if (availableER.length > 0) tryAssign(w, availableER);
+        else unassignedPool.push(w);
       });
 
       let finalPool = [...unassignedPool, ...remainingWorkers];
@@ -383,7 +461,18 @@
       const inputs = document.querySelectorAll('.worker-input');
       const workerList = Array.from(inputs).map(input => input.value);
 
-      const payload = { mode: 'saveSchedule', date: dateVal, workers: workerList };
+      // 저장할 때 앱에 보이는 근무지 목록(동적)을 그대로 시트에 전달
+      const headersToSave = [];
+      document.querySelectorAll('.worker-input').forEach(input => {
+        headersToSave.push(input.getAttribute('data-post'));
+      });
+
+      const payload = { 
+        mode: 'saveSchedule', 
+        date: dateVal, 
+        workers: workerList,
+        headers: headersToSave 
+      };
 
       const btn = document.getElementById('saveBtn');
       btn.innerText = "⏳ 저장 중...";
@@ -402,7 +491,6 @@
         }
       } catch (error) {
         alert('저장 중 오류가 발생했습니다.');
-        console.error(error);
       } finally {
         btn.innerText = "💾 스케줄 저장하기";
         btn.disabled = false;
